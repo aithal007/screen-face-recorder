@@ -95,6 +95,43 @@ but turn it off if you're showing text on camera).
 - The webcam box is drawn onto the video permanently — it can't be moved after
   the fact. Position it before you hit Record.
 
+## Deploying
+
+The app is three static files with no backend, no build step and no API keys,
+so any static host works. The only hard requirement is **HTTPS** — browsers
+refuse camera, microphone and screen capture outside a secure context.
+
+Nothing is uploaded when someone records: capture, compositing and encoding all
+happen in the visitor's browser, and the file is saved straight to their
+downloads. The server only ever hands out the three files.
+
+### GitHub Pages
+
+```
+gh auth login                        # once, interactive
+gh repo create screen-face-recorder --public --source=. --push
+gh api -X POST repos/:owner/screen-face-recorder/pages \
+  -f build_type=legacy -f 'source[branch]=main' -f 'source[path]=/'
+```
+
+Live at `https://<user>.github.io/screen-face-recorder/` after a minute or so.
+To update, just `git push` — Pages redeploys itself.
+
+Note that Pages on a free account requires a **public** repo, so the source is
+visible to anyone. That is fine here — there are no secrets in it.
+
+### Anything else
+
+Netlify, Cloudflare Pages, Vercel and friends all take this folder as-is;
+point them at the repo, leave the build command blank, and set the publish
+directory to the project root. The [`_headers`](_headers) file sets a
+permissive `Permissions-Policy` for camera, microphone and display capture on
+hosts that read it (Netlify, Cloudflare). GitHub Pages ignores that file but
+sends no restrictive policy of its own, so capture works there regardless.
+
+[`start.bat`](start.bat) is only for local development and is harmless in a
+deploy — it is never served as anything but a static file.
+
 ## Next steps
 
 The compositing code here is exactly what an Electron renderer would run, so
