@@ -1,0 +1,9 @@
+# local server / editor cruft
+.vscode/
+.idea/
+*.log
+__pycache__/
+
+# never commit test recordings
+*.webm
+*.mp4

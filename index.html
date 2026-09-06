@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Screen &amp; Face Recorder</title>
+<meta name="description" content="Record your screen and webcam together into a single video, with a movable face-cam overlay. Runs entirely in your browser - nothing is uploaded." />
+<meta name="theme-color" content="#0d1017" />
+<meta property="og:title" content="Screen &amp; Face Recorder" />
+<meta property="og:description" content="Record your screen and webcam into one video, right in the browser." />
+<meta property="og:type" content="website" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <h1>Screen &amp; Face Recorder</h1>
+  </div>
+  <div class="status" id="status">Idle — pick your sources to begin</div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ STAGE ============ -->
+  <section class="stage-wrap">
+    <div class="stage" id="stage">
+      <canvas id="canvas" width="1280" height="720"></canvas>
+
+      <!-- draggable / resizable face-cam handle, sits on top of the canvas -->
+      <div class="cam-handle" id="camHandle" hidden>
+        <div class="cam-handle-label">drag</div>
+        <div class="cam-grip" id="camGrip" title="Drag to resize"></div>
+      </div>
+
+      <div class="rec-badge" id="recBadge" hidden><span></span>REC</div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-rec" id="btnRecord" disabled>
+        <span class="ico-rec"></span> Record
+      </button>
+      <button class="btn" id="btnPause" disabled>Pause</button>
+      <button class="btn btn-stop" id="btnStop" disabled>Stop</button>
+
+      <div class="timer" id="timer">00:00:00</div>
+      <div class="size" id="size">0.0 MB</div>
+    </div>
+
+    <div class="takes" id="takes" hidden>
+      <h3>Recordings this session</h3>
+      <ul id="takesList"></ul>
+    </div>
+  </section>
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="panel">
+
+    <div class="group">
+      <h2>Sources</h2>
+
+      <button class="src-btn" id="btnScreen">
+        <span class="src-ico">🖥️</span>
+        <span class="src-txt"><strong>Screen</strong><em id="screenLabel">Not shared</em></span>
+        <span class="src-state" id="screenState">off</span>
+      </button>
+
+      <button class="src-btn" id="btnCam">
+        <span class="src-ico">🎥</span>
+        <span class="src-txt"><strong>Camera</strong><em id="camLabel">Off</em></span>
+        <span class="src-state" id="camState">off</span>
+      </button>
+
+      <button class="src-btn" id="btnMic">
+        <span class="src-ico">🎙️</span>
+        <span class="src-txt"><strong>Microphone</strong><em id="micLabel">Off</em></span>
+        <span class="src-state" id="micState">off</span>
+      </button>
+
+      <div class="meter-row">
+        <span class="meter-cap">Mic level</span>
+        <div class="meter"><i id="meterFill"></i></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Devices</h2>
+      <label class="field">
+        <span>Camera</span>
+        <select id="selCam"><option value="">Default camera</option></select>
+      </label>
+      <label class="field">
+        <span>Microphone</span>
+        <select id="selMic"><option value="">Default microphone</option></select>
+      </label>
+    </div>
+
+    <div class="group">
+      <h2>Face cam</h2>
+
+      <div class="seg" id="segShape">
+        <button data-shape="rounded" class="on">Rounded</button>
+        <button data-shape="circle">Circle</button>
+        <button data-shape="square">Square</button>
+      </div>
+
+      <label class="field">
+        <span>Size <b id="valSize">22%</b></span>
+        <input type="range" id="rngSize" min="8" max="60" value="22" />
+      </label>
+
+      <label class="field">
+        <span>Border <b id="valBorder">4 px</b></span>
+        <input type="range" id="rngBorder" min="0" max="16" value="4" />
+      </label>
+
+      <label class="field">
+        <span>Corner radius <b id="valRadius">18%</b></span>
+        <input type="range" id="rngRadius" min="0" max="50" value="18" />
+      </label>
+
+      <div class="corners">
+        <span>Snap to</span>
+        <div class="corner-grid">
+          <button data-corner="tl" title="Top left"></button>
+          <button data-corner="tr" title="Top right"></button>
+          <button data-corner="bl" title="Bottom left"></button>
+          <button data-corner="br" title="Bottom right" class="on"></button>
+        </div>
+      </div>
+
+      <label class="check"><input type="checkbox" id="chkMirror" checked /> Mirror my face</label>
+      <label class="check"><input type="checkbox" id="chkShadow" checked /> Drop shadow</label>
+      <label class="check"><input type="checkbox" id="chkShowCam" checked /> Show face cam</label>
+    </div>
+
+    <div class="group">
+      <h2>Quality</h2>
+      <label class="field">
+        <span>Resolution</span>
+        <select id="selRes">
+          <option value="0">Native (as shared)</option>
+          <option value="2160">4K — 2160p</option>
+          <option value="1440">1440p</option>
+          <option value="1080" selected>1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Frame rate</span>
+        <select id="selFps">
+          <option value="60">60 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="24">24 fps</option>
+          <option value="15">15 fps</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Bitrate</span>
+        <select id="selQual">
+          <option value="12000000">Very high — 12 Mbps</option>
+          <option value="8000000" selected>High — 8 Mbps</option>
+          <option value="4000000">Medium — 4 Mbps</option>
+          <option value="1500000">Low — 1.5 Mbps</option>
+        </select>
+      </label>
+      <p class="hint" id="fmtHint"></p>
+    </div>
+
+  </aside>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
