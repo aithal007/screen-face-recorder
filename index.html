@@ -88,6 +88,26 @@
     </div>
 
     <div class="group">
+      <h2>Recording region <span class="tag">optional</span></h2>
+
+      <label class="check"><input type="checkbox" id="chkRegion" /> Record only part of the screen</label>
+
+      <p class="hint">
+        Crops the recording to one rectangle — like OBS's region/display
+        capture. Put your apps inside the box, keep the teleprompter (or
+        anything else) outside it, and only the box is ever recorded — true
+        no matter which capture mode you picked, Entire Screen included.
+      </p>
+
+      <div class="region-map-wrap" id="regionPanel" hidden>
+        <canvas id="regionMap" width="320" height="180"></canvas>
+        <div class="region-handle" id="regionHandle">
+          <div class="region-grip" id="regionGrip" title="Drag to resize"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
       <h2>Script <span class="tag">hidden from recording</span></h2>
 
       <textarea id="scriptText" rows="5"

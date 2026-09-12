@@ -51,6 +51,29 @@ the recording, no matter where you place it. *Entire Screen* capture is the
 one mode where this doesn't hold, because that really does grab everything
 visible on the monitor, teleprompter included.
 
+### Switching between two different apps mid-recording
+
+Window/Tab capture only ever shows the one surface you picked — so if your
+video needs to show you switching between, say, a browser and a separate
+desktop app, capture **Entire Screen** instead; a single Window or Tab capture
+would just show one of them frozen while you narrate the other. Alt-tabbing
+is then perfectly reliable: Entire Screen reads the literal monitor image
+continuously regardless of which app has focus, and the app is exempt from
+Chrome's background-tab throttling while it's actively capturing, so nothing
+freezes even if you minimize the browser entirely.
+
+### Recording only part of the screen (like OBS's region capture)
+
+Entire Screen mode is the one case where the teleprompter trick above stops
+working on its own. The fix: tick **Record only part of the screen** under
+*Recording region*, and drag the highlighted box on the minimap around
+whichever apps you want visible. The output canvas is then cropped to exactly
+that rectangle — the minimap keeps showing your full screen live so you can
+see the teleprompter sitting outside the box, but only pixels inside it are
+ever drawn to the recording. This makes Entire Screen sharing just as safe as
+Window capture, while still letting you switch between two on-screen apps
+freely, since both can live inside the same cropped box.
+
 ## How it works
 
 The preview you see **is** the recording — there is no separate render step.

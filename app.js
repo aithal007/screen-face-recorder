@@ -16,6 +16,12 @@ const recBadge  = $('recBadge');
 const statusEl  = $('status');
 const toastEl   = $('toast');
 
+const regionMap    = $('regionMap');
+const regionCtx    = regionMap.getContext('2d');
+const regionPanel  = $('regionPanel');
+const regionHandle = $('regionHandle');
+const regionGrip   = $('regionGrip');
+
 /* hidden <video> elements act as the decode targets for each stream */
 const screenVideo = makeVideo();
 const camVideo    = makeVideo();
@@ -73,6 +79,12 @@ const cam = {
 
 const settings = { fps: 30, maxHeight: 1080, bitrate: 8_000_000 };
 
+/* recording region — crops the OUTPUT to one rectangle of the shared screen,
+   normalized to the full screen capture (0..1). Anything outside it (a
+   teleprompter included) is never drawn to the canvas, so it can never end
+   up in the recording — true regardless of which capture mode was picked. */
+const region = { enabled: false, x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+
 /* floating teleprompter — lives in its own window, never in the canvas */
 const TP = {
   win: null, doc: null, mode: '',
@@ -125,8 +137,14 @@ function resizeCanvas() {
   let w = 1280, h = 720;
 
   if (screenVideo.videoWidth) {
-    w = screenVideo.videoWidth;
-    h = screenVideo.videoHeight;
+    if (region.enabled) {
+      // output matches the cropped rectangle's own aspect, not the full screen's
+      w = Math.round(region.w * screenVideo.videoWidth);
+      h = Math.round(region.h * screenVideo.videoHeight);
+    } else {
+      w = screenVideo.videoWidth;
+      h = screenVideo.videoHeight;
+    }
   } else if (camVideo.videoWidth) {
     w = camVideo.videoWidth;
     h = camVideo.videoHeight;
@@ -208,7 +226,15 @@ function drawFrame(now) {
   }
 
   if (hasScreen) {
-    ctx.drawImage(screenVideo, 0, 0, W, H);
+    if (region.enabled) {
+      const sx = region.x * screenVideo.videoWidth;
+      const sy = region.y * screenVideo.videoHeight;
+      const sw = region.w * screenVideo.videoWidth;
+      const sh = region.h * screenVideo.videoHeight;
+      ctx.drawImage(screenVideo, sx, sy, sw, sh, 0, 0, W, H);
+    } else {
+      ctx.drawImage(screenVideo, 0, 0, W, H);
+    }
   } else {
     // camera-only mode: the webcam fills the whole frame
     drawCover(camVideo, 0, 0, W, H);
@@ -279,6 +305,7 @@ function startLoop() {
     const now = performance.now();
     updateTeleprompter(now);
     drawFrame(now);
+    drawRegionMap(now);
   };
 
   try {
@@ -354,6 +381,77 @@ window.addEventListener('pointermove', onDragMove);
 window.addEventListener('pointerup', () => { drag = null; });
 
 /* =========================================================================
+   Recording region — crops the output to one rectangle, like OBS's region /
+   display capture. The minimap below always shows the FULL shared screen so
+   you can see where your teleprompter sits relative to the crop; only the
+   highlighted rectangle is ever drawn into the recorded canvas.
+   ========================================================================= */
+
+function resizeRegionMap() {
+  if (!screenVideo.videoWidth) return;
+  const targetW = 320;
+  regionMap.width = targetW;
+  regionMap.height = Math.round(targetW * (screenVideo.videoHeight / screenVideo.videoWidth));
+  layoutRegionHandle();
+}
+
+function layoutRegionHandle() {
+  regionHandle.style.left   = region.x * 100 + '%';
+  regionHandle.style.top    = region.y * 100 + '%';
+  regionHandle.style.width  = region.w * 100 + '%';
+  regionHandle.style.height = region.h * 100 + '%';
+}
+
+let lastMapDraw = 0;
+function drawRegionMap(now) {
+  if (regionPanel.hidden || !screenVideo.videoWidth) return;
+  if (now - lastMapDraw < 100) return; // a thumbnail doesn't need full fps
+  lastMapDraw = now;
+  regionCtx.drawImage(screenVideo, 0, 0, regionMap.width, regionMap.height);
+}
+
+let regionDrag = null;
+
+regionHandle.addEventListener('pointerdown', (e) => {
+  if (e.target === regionGrip || S.recording) return;
+  const r = regionMap.getBoundingClientRect();
+  regionDrag = { mode: 'move', px: e.clientX, py: e.clientY, ox: region.x, oy: region.y, r };
+  regionHandle.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+regionGrip.addEventListener('pointerdown', (e) => {
+  if (S.recording) return;
+  const r = regionMap.getBoundingClientRect();
+  regionDrag = { mode: 'size', px: e.clientX, py: e.clientY, ow: region.w, oh: region.h, r };
+  regionGrip.setPointerCapture(e.pointerId);
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+function onRegionDragMove(e) {
+  if (!regionDrag) return;
+  const { r } = regionDrag;
+
+  if (regionDrag.mode === 'move') {
+    const dx = (e.clientX - regionDrag.px) / r.width;
+    const dy = (e.clientY - regionDrag.py) / r.height;
+    region.x = clamp(regionDrag.ox + dx, 0, 1 - region.w);
+    region.y = clamp(regionDrag.oy + dy, 0, 1 - region.h);
+  } else {
+    const dx = (e.clientX - regionDrag.px) / r.width;
+    const dy = (e.clientY - regionDrag.py) / r.height;
+    region.w = clamp(regionDrag.ow + dx, 0.1, 1 - region.x);
+    region.h = clamp(regionDrag.oh + dy, 0.1, 1 - region.y);
+  }
+  layoutRegionHandle();
+  resizeCanvas();
+}
+
+window.addEventListener('pointermove', onRegionDragMove);
+window.addEventListener('pointerup', () => { regionDrag = null; });
+
+/* =========================================================================
    Sources
    ========================================================================= */
 
@@ -412,8 +510,12 @@ async function toggleScreen() {
 
     if (stream.getAudioTracks().length) connectSystemAudio(stream);
 
-    screenVideo.addEventListener('loadedmetadata', resizeCanvas, { once: true });
+    screenVideo.addEventListener('loadedmetadata', () => {
+      resizeCanvas();
+      resizeRegionMap();
+    }, { once: true });
     resizeCanvas();
+    resizeRegionMap();
     startLoop();
     updateButtons();
     setStatus('Ready to record', 'live');
@@ -517,6 +619,11 @@ function markSource(kind, on, label, badge) {
  */
 function updateCaptureWarning() {
   const el = $('captureWarn');
+
+  // A cropped region only ever draws that rectangle to the canvas, so
+  // whatever's outside it — Entire Screen or not — was never recordable.
+  if (region.enabled) { el.hidden = true; return; }
+
   const risky = S.displaySurface === 'monitor';
   const tpOpen = !!(TP.win && !TP.win.closed);
 
@@ -524,7 +631,7 @@ function updateCaptureWarning() {
 
   el.hidden = false;
   el.textContent = tpOpen
-    ? '⚠ Entire Screen is selected — your open teleprompter will be recorded if it’s visible on screen. Move it out of view or close it before it matters.'
+    ? '⚠ Entire Screen is selected — your open teleprompter will be recorded if it’s visible on screen. Move it out of view, close it, or crop the recording region below.'
     : '⚠ Entire Screen is selected — anything you put on screen, including a teleprompter, will be recorded.';
 }
 
@@ -892,7 +999,8 @@ function updateButtons() {
 }
 
 function lockSettings(locked) {
-  ['selRes', 'selFps', 'selQual'].forEach((id) => { $(id).disabled = locked; });
+  ['selRes', 'selFps', 'selQual', 'chkRegion'].forEach((id) => { $(id).disabled = locked; });
+  regionPanel.classList.toggle('locked', locked);
 }
 
 $('btnScreen').onclick       = toggleScreen;
@@ -953,6 +1061,15 @@ document.querySelector('.corner-grid').addEventListener('click', (e) => {
 $('chkMirror').onchange  = (e) => { cam.mirror = e.target.checked; };
 $('chkShadow').onchange  = (e) => { cam.shadow = e.target.checked; };
 $('chkShowCam').onchange = (e) => { cam.visible = e.target.checked; layoutHandle(); };
+
+/* recording region */
+$('chkRegion').onchange = (e) => {
+  region.enabled = e.target.checked;
+  regionPanel.hidden = !region.enabled;
+  if (region.enabled) { resizeRegionMap(); layoutRegionHandle(); }
+  resizeCanvas();
+  updateCaptureWarning();
+};
 
 /* quality */
 $('selRes').onchange  = (e) => { settings.maxHeight = +e.target.value; resizeCanvas(); };

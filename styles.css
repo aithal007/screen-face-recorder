@@ -182,6 +182,25 @@ body{
   color:#ffb3b8;font-size:12px;line-height:1.5;
 }
 
+.region-map-wrap{
+  position:relative;margin-top:10px;border-radius:8px;overflow:hidden;
+  border:1px solid var(--line);line-height:0;background:#000;
+}
+#regionMap{display:block;width:100%;height:auto}
+.region-handle{
+  position:absolute;cursor:grab;border-radius:2px;
+  border:2px solid var(--accent);background:rgba(91,140,255,.18);
+}
+.region-handle:active{cursor:grabbing}
+.region-grip{
+  position:absolute;right:-7px;bottom:-7px;width:16px;height:16px;
+  border-radius:50%;background:var(--accent);border:2px solid #fff;
+  cursor:nwse-resize;
+}
+.region-map-wrap.locked{opacity:.5}
+.region-map-wrap.locked .region-handle{pointer-events:none;cursor:default}
+.region-map-wrap.locked .region-grip{cursor:default}
+
 .meter-row{display:flex;align-items:center;gap:9px;margin-top:4px}
 .meter-cap{font-size:11px;color:var(--muted);white-space:nowrap}
 .meter{flex:1;height:6px;border-radius:4px;background:#232b3b;overflow:hidden}
