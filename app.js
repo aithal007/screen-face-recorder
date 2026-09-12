@@ -56,6 +56,8 @@ const S = {
   ticking: false,
   lastDraw: 0,
   camRect: null,     // last drawn face-cam rect, in canvas pixels
+
+  displaySurface: '', // 'monitor' | 'window' | 'browser' — what getDisplayMedia is actually reading
 };
 
 /* face-cam geometry, normalized to canvas size (0..1) */
@@ -77,6 +79,7 @@ const TP = {
   scrollEl: null, textEl: null,
   playing: false, speed: 45, fontSize: 28,
   lastTick: 0, watchTimer: 0,
+  savedScrollFrac: 0, // remembers reading position across a quick close/reopen
 };
 
 /* =========================================================================
@@ -354,13 +357,17 @@ window.addEventListener('pointerup', () => { drag = null; });
    Sources
    ========================================================================= */
 
+const SURFACE_BADGE = { monitor: 'entire screen', window: 'window', browser: 'tab' };
+
 async function toggleScreen() {
   if (S.screenStream) {
     stopStream(S.screenStream);
     S.screenStream = null;
+    S.displaySurface = '';
     screenVideo.srcObject = null;
     disconnectSystemAudio();
     markSource('screen', false, 'Not shared');
+    updateCaptureWarning();
     resizeCanvas();
     updateButtons();
     return;
@@ -381,15 +388,23 @@ async function toggleScreen() {
     await screenVideo.play().catch(() => {});
 
     const vTrack = stream.getVideoTracks()[0];
-    markSource('screen', true, vTrack.label || 'Screen');
+    // 'monitor' = Entire Screen, 'window' = one app window, 'browser' = one tab.
+    // Only 'monitor' actually rasterizes the whole desktop — the other two read
+    // a single surface's own buffer, so anything floating on top (a
+    // teleprompter included) is never part of what they capture.
+    S.displaySurface = vTrack.getSettings?.().displaySurface || '';
+    markSource('screen', true, vTrack.label || 'Screen', SURFACE_BADGE[S.displaySurface]);
+    updateCaptureWarning();
 
     // the browser's own "Stop sharing" bar
     vTrack.addEventListener('ended', () => {
       if (S.recording) stopRecording();
       S.screenStream = null;
+      S.displaySurface = '';
       screenVideo.srcObject = null;
       disconnectSystemAudio();
       markSource('screen', false, 'Not shared');
+      updateCaptureWarning();
       resizeCanvas();
       updateButtons();
       toast('Screen sharing ended');
@@ -486,11 +501,31 @@ async function toggleMic() {
   }
 }
 
-function markSource(kind, on, label) {
+function markSource(kind, on, label, badge) {
   const btn = { screen: $('btnScreen'), cam: $('btnCam'), mic: $('btnMic') }[kind];
   btn.classList.toggle('on', on);
-  $(kind + 'State').textContent = on ? 'on' : 'off';
+  const stateEl = $(kind + 'State');
+  stateEl.textContent = on ? (badge || 'on') : 'off';
+  stateEl.classList.toggle('risk', on && badge === 'entire screen');
   $(kind + 'Label').textContent = label;
+}
+
+/**
+ * Show/hide the on-screen reminder that "Entire Screen" capture records
+ * everything on the monitor — including a teleprompter that a Window/Tab
+ * capture would otherwise never see, no matter how it overlaps.
+ */
+function updateCaptureWarning() {
+  const el = $('captureWarn');
+  const risky = S.displaySurface === 'monitor';
+  const tpOpen = !!(TP.win && !TP.win.closed);
+
+  if (!risky) { el.hidden = true; return; }
+
+  el.hidden = false;
+  el.textContent = tpOpen
+    ? '⚠ Entire Screen is selected — your open teleprompter will be recorded if it’s visible on screen. Move it out of view or close it before it matters.'
+    : '⚠ Entire Screen is selected — anything you put on screen, including a teleprompter, will be recorded.';
 }
 
 /* =========================================================================
@@ -771,6 +806,7 @@ async function openTeleprompter() {
 
   setupTeleprompterDoc(TP.win, text);
   $('btnTeleprompter').textContent = 'Teleprompter is open — click to focus';
+  updateCaptureWarning();
 }
 
 function setupTeleprompterDoc(win, text) {
@@ -786,11 +822,19 @@ function setupTeleprompterDoc(win, text) {
   TP.playing = false;
   bumpFont(0);
 
+  // If you closed the teleprompter to duck under Entire Screen capture and
+  // reopened it a moment later, land back where you were instead of at the top.
+  const maxScroll = Math.max(1, TP.scrollEl.scrollHeight - TP.scrollEl.clientHeight);
+  TP.scrollEl.scrollTop = TP.savedScrollFrac * maxScroll;
+
+  const speedSlider = doc.getElementById('tpSpeed');
+  speedSlider.value = clamp(Math.round(TP.speed / 15), 1, 8);
+
   doc.getElementById('tpPlay').onclick = toggleTeleprompterPlay;
   doc.getElementById('tpFontDown').onclick = () => bumpFont(-2);
   doc.getElementById('tpFontUp').onclick = () => bumpFont(2);
   doc.getElementById('tpReset').onclick = () => { TP.scrollEl.scrollTop = 0; };
-  doc.getElementById('tpSpeed').oninput = (e) => { TP.speed = +e.target.value * 15; };
+  speedSlider.oninput = (e) => { TP.speed = +e.target.value * 15; };
 
   doc.addEventListener('keydown', (e) => {
     if (e.code === 'Space') { e.preventDefault(); toggleTeleprompterPlay(); }
@@ -799,9 +843,14 @@ function setupTeleprompterDoc(win, text) {
 
   const cleanup = () => {
     clearInterval(TP.watchTimer);
+    if (TP.scrollEl) {
+      const max = Math.max(1, TP.scrollEl.scrollHeight - TP.scrollEl.clientHeight);
+      TP.savedScrollFrac = clamp(TP.scrollEl.scrollTop / max, 0, 1);
+    }
     TP.win = null; TP.doc = null; TP.scrollEl = null; TP.textEl = null;
     TP.playing = false;
     $('btnTeleprompter').textContent = 'Open floating teleprompter';
+    updateCaptureWarning();
   };
   win.addEventListener('pagehide', cleanup, { once: true });
 
