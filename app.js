@@ -71,6 +71,14 @@ const cam = {
 
 const settings = { fps: 30, maxHeight: 1080, bitrate: 8_000_000 };
 
+/* floating teleprompter — lives in its own window, never in the canvas */
+const TP = {
+  win: null, doc: null, mode: '',
+  scrollEl: null, textEl: null,
+  playing: false, speed: 45, fontSize: 28,
+  lastTick: 0, watchTimer: 0,
+};
+
 /* =========================================================================
    Helpers
    ========================================================================= */
@@ -264,7 +272,11 @@ function startLoop() {
   if (S.ticking) return;
   S.ticking = true;
 
-  const tick = () => drawFrame(performance.now());
+  const tick = () => {
+    const now = performance.now();
+    updateTeleprompter(now);
+    drawFrame(now);
+  };
 
   try {
     const src = 'let id=null;onmessage=function(e){clearInterval(id);' +
@@ -672,6 +684,153 @@ function tickTimer() {
 }
 
 /* =========================================================================
+   Teleprompter — a script you can read while recording, without it being
+   part of the recording.
+
+   This works because of *how* browser screen capture reads pixels, not
+   because of anything special this code does:
+
+     - "Entire Screen" capture grabs the literal monitor image, so anything
+       drawn on top — including this window — would be captured.
+     - "Window" and "Chrome Tab" capture instead read directly from that one
+       surface's own render buffer. A separate window sitting on top of it,
+       even directly overlapping, was never part of that buffer, so it can
+       never appear in the recording regardless of on-screen stacking order.
+
+   So the teleprompter just needs to be a genuinely separate top-level
+   window. The Document Picture-in-Picture API gives a real always-on-top
+   one; a plain window.open() popup is the fallback for browsers without it
+   (Firefox, Safari) — it works the same way for capture purposes, it just
+   isn't guaranteed to float above other windows on its own.
+   ========================================================================= */
+
+const TP_CSS = `
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:#0d1017;color:#e6ebf5;
+    font:16px/1.6 "Segoe UI",system-ui,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  .tp-bar{
+    display:flex;align-items:center;gap:8px;flex:0 0 auto;
+    padding:8px 10px;background:#141924;border-bottom:1px solid #242c3c;
+  }
+  .tp-bar button{
+    background:#161c28;color:#e6ebf5;border:1px solid #242c3c;
+    border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer;
+  }
+  .tp-bar button:hover{background:#1d2534}
+  .tp-bar input[type=range]{flex:1;accent-color:#5b8cff}
+  .tp-scroll{flex:1;overflow-y:auto}
+  .tp-text{
+    padding:45vh 24px 60vh;white-space:pre-wrap;
+    font-weight:600;letter-spacing:.2px;
+  }
+`;
+
+const TP_MARKUP = `
+  <div class="tp-bar">
+    <button id="tpPlay" title="Play / pause (Space)">▶</button>
+    <input id="tpSpeed" type="range" min="1" max="8" value="3" title="Scroll speed" />
+    <button id="tpFontDown" title="Smaller text">A−</button>
+    <button id="tpFontUp" title="Larger text">A+</button>
+    <button id="tpReset" title="Back to top">⟲</button>
+  </div>
+  <div class="tp-scroll" id="tpScroll"><div class="tp-text" id="tpText"></div></div>
+`;
+
+async function openTeleprompter() {
+  const text = $('scriptText').value.trim();
+  if (!text) { toast('Write or paste a script first', true); return; }
+
+  if (TP.win && !TP.win.closed) {
+    TP.textEl.textContent = text;
+    try { TP.win.focus(); } catch {}
+    return;
+  }
+
+  if ('documentPictureInPicture' in window) {
+    try {
+      TP.win = await documentPictureInPicture.requestWindow({ width: 440, height: 280 });
+    } catch (err) {
+      toast('Could not open the floating teleprompter: ' + err.message, true);
+      return;
+    }
+    TP.mode = 'pip';
+  } else {
+    // Popup fallback (Firefox / Safari) — not guaranteed to stay on top,
+    // so this path also works for capture purposes but needs manual placement.
+    TP.win = window.open('', 'teleprompter', 'width=460,height=320,popup=1');
+    TP.mode = 'popup';
+    if (!TP.win) {
+      toast('The browser blocked the popup — allow popups for this page', true);
+      return;
+    }
+  }
+
+  setupTeleprompterDoc(TP.win, text);
+  $('btnTeleprompter').textContent = 'Teleprompter is open — click to focus';
+}
+
+function setupTeleprompterDoc(win, text) {
+  const doc = win.document;
+  doc.title = 'Script';
+  doc.head.innerHTML = `<style>${TP_CSS}</style>`;
+  doc.body.innerHTML = TP_MARKUP;
+
+  TP.doc = doc;
+  TP.scrollEl = doc.getElementById('tpScroll');
+  TP.textEl = doc.getElementById('tpText');
+  TP.textEl.textContent = text;
+  TP.playing = false;
+  bumpFont(0);
+
+  doc.getElementById('tpPlay').onclick = toggleTeleprompterPlay;
+  doc.getElementById('tpFontDown').onclick = () => bumpFont(-2);
+  doc.getElementById('tpFontUp').onclick = () => bumpFont(2);
+  doc.getElementById('tpReset').onclick = () => { TP.scrollEl.scrollTop = 0; };
+  doc.getElementById('tpSpeed').oninput = (e) => { TP.speed = +e.target.value * 15; };
+
+  doc.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); toggleTeleprompterPlay(); }
+    if (e.key === 'Escape') win.close();
+  });
+
+  const cleanup = () => {
+    clearInterval(TP.watchTimer);
+    TP.win = null; TP.doc = null; TP.scrollEl = null; TP.textEl = null;
+    TP.playing = false;
+    $('btnTeleprompter').textContent = 'Open floating teleprompter';
+  };
+  win.addEventListener('pagehide', cleanup, { once: true });
+
+  // pagehide doesn't fire for a plain popup on every browser — poll as a backstop
+  if (TP.mode === 'popup') {
+    TP.watchTimer = setInterval(() => { if (win.closed) cleanup(); }, 500);
+  }
+}
+
+function toggleTeleprompterPlay() {
+  TP.playing = !TP.playing;
+  TP.lastTick = performance.now();
+  const btn = TP.doc?.getElementById('tpPlay');
+  if (btn) btn.textContent = TP.playing ? '⏸' : '▶';
+}
+
+function bumpFont(delta) {
+  TP.fontSize = clamp(TP.fontSize + delta, 14, 64);
+  if (TP.textEl) TP.textEl.style.fontSize = TP.fontSize + 'px';
+}
+
+function updateTeleprompter(now) {
+  if (!TP.playing || !TP.scrollEl) return;
+  const dt = (now - TP.lastTick) / 1000;
+  TP.lastTick = now;
+  try { TP.scrollEl.scrollTop += TP.speed * dt; } catch { TP.playing = false; }
+}
+
+/* =========================================================================
    UI wiring
    ========================================================================= */
 
@@ -687,12 +846,13 @@ function lockSettings(locked) {
   ['selRes', 'selFps', 'selQual'].forEach((id) => { $(id).disabled = locked; });
 }
 
-$('btnScreen').onclick = toggleScreen;
-$('btnCam').onclick    = toggleCam;
-$('btnMic').onclick    = toggleMic;
-$('btnRecord').onclick = startRecording;
-$('btnPause').onclick  = pauseRecording;
-$('btnStop').onclick   = stopRecording;
+$('btnScreen').onclick       = toggleScreen;
+$('btnCam').onclick          = toggleCam;
+$('btnMic').onclick          = toggleMic;
+$('btnRecord').onclick       = startRecording;
+$('btnPause').onclick        = pauseRecording;
+$('btnStop').onclick         = stopRecording;
+$('btnTeleprompter').onclick = openTeleprompter;
 
 /* shape */
 $('segShape').addEventListener('click', (e) => {
@@ -764,6 +924,10 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('beforeunload', (e) => {
   if (S.recording) { e.preventDefault(); e.returnValue = ''; }
+});
+
+window.addEventListener('pagehide', () => {
+  if (TP.win && !TP.win.closed) TP.win.close();
 });
 
 /* =========================================================================

@@ -35,6 +35,22 @@ does not support `getDisplayMedia` with audio at all.
 
 Shortcuts: `Alt+R` start/stop, `Alt+P` pause/resume.
 
+## Reading a script while you record — without it being in the video
+
+Paste your talking points into the **Script** box in the sidebar and click
+**Open floating teleprompter**. It opens in its own window with autoscroll
+(`Space` to play/pause, drag it anywhere, resize the text with `A−`/`A+`).
+
+The one rule that makes it invisible in the recording: **when you share your
+screen, pick a Window or a Chrome Tab — never Entire Screen.**
+
+Window and tab capture read pixels directly from that one surface's own
+render buffer, not from the monitor, so a separate window floating on top —
+the teleprompter included — was never part of that buffer and can't appear in
+the recording, no matter where you place it. *Entire Screen* capture is the
+one mode where this doesn't hold, because that really does grab everything
+visible on the monitor, teleprompter included.
+
 ## How it works
 
 The preview you see **is** the recording — there is no separate render step.
